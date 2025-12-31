@@ -253,7 +253,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, for
             else: await update.message.reply_text("Данные не найдены, сер.", reply_markup=reply_markup)
         except Exception as e: await update.message.reply_text(f"⚠️ Ошибка, сер: {e}", reply_markup=reply_markup)
     elif "Очистить чат" in text:
-        await update.message.reply_text("Чат очищен (память очищена), сер.", reply_markup=reply_markup)
+        # Пытаемся удалить последние сообщения для визуальной очистки
+        msg_id = update.message.message_id
+        await update.message.reply_text("Начинаю очистку истории, сер...", reply_markup=reply_markup)
+        
+        # Удаляем последние 50 сообщений (лимит API для группового удаления невелик, делаем по одному)
+        for i in range(50):
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id - i)
+            except:
+                continue
+        
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="История сообщений была очищена насколько это возможно, сер.", 
+            reply_markup=reply_markup
+        )
     elif "Документация" in text:
         doc_text = (
             "📄 *Документация Katerine System*\n\n"
