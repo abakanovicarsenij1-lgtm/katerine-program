@@ -1,4 +1,5 @@
 import os
+# adsf
 import io
 import random
 import json
@@ -69,6 +70,15 @@ INTRO_PHRASES = [
     "Свежие данные по оценкам, сер.",
     "Результаты проверки системы NZ.ua, сер."
 ]
+# Константы уведомлений
+LOW_MARK_LIMIT = 8
+HIGH_MARK_LIMIT = 11
+def get_feedback(mark_val):
+    if mark_val <= LOW_MARK_LIMIT:
+        return random.choice(["Вынужден вас огорчить, сер...", "Вы огорчаете меня этим результатом, сер.", "Это плохой результат, сер."])
+    elif mark_val >= HIGH_MARK_LIMIT:
+        return random.choice(["Отлично, сер!", "Превосходный результат, сер!", "Вы как всегда на высоте, сер!"])
+    return "Новая оценка в системе, сер."
 def fetch_nz_data(url):
     scraper = cloudscraper.create_scraper()
     login_page = scraper.get(f"{BASE_URL}/login")
@@ -111,9 +121,16 @@ def generate_table_image(marks_data):
     
     y = header_height
     for idx, (subject, marks) in enumerate(marks_data):
+        if not marks.strip(): continue # Пропускаем предметы без оценок для чистоты
+        
         if idx % 2 == 1: draw.rectangle([0, y, width, y + row_height], fill=(245, 245, 245))
-        draw.text((padding, y + 10), subject[:45], fill=(0, 0, 0), font=bold_font if len(marks) > 0 else font)
-        draw.text((col_split + 10, y + 10), marks, fill=(60, 60, 60), font=font)
+        draw.text((padding, y + 10), subject[:45], fill=(0, 0, 0), font=bold_font)
+        
+        # Обрезаем очень длинные списки оценок, если они не влезают
+        display_marks = marks
+        if len(marks) > 150: display_marks = marks[:147] + "..."
+        
+        draw.text((col_split + 10, y + 10), display_marks, fill=(60, 60, 60), font=font)
         draw.line([0, y + row_height, width, y + row_height], fill=(210, 210, 210))
         y += row_height
         
@@ -142,17 +159,34 @@ def get_all_marks_raw():
     soup = BeautifulSoup(html, 'html.parser') 
     table = soup.select_one('table')
     results = []
+    subjects_dict = {}
     if table:
         for row in table.select('tr'):
             cells = row.select('td, th')
             if len(cells) > 2:
                 subject = cells[1].get_text(strip=True)
-                if subject == "Дисципліна" or not subject: continue
-                marks_parts = [cells[i].get_text(strip=True) for i in range(2, len(cells)) if cells[i].get_text(strip=True)]
-                marks_str = " | ".join(marks_parts)
-                if "Підприємництво" in subject: subject = "Фін. грамотность"
+                if subject in ["Дисципліна", "Назва предмету"] or not subject: continue
+                
+                marks_parts = []
+                for i in range(2, len(cells)):
+                    txt = cells[i].get_text(strip=True)
+                    if txt and txt not in ["Отримані результати"]:
+                        marks_parts.append(txt)
+                
+                if not marks_parts: continue
+                
+                if "Підприємництво" in subject: subject = "Фин. грамотность"
                 if "Трудове" in subject: subject = "Худ. праця"
-                results.append((subject, marks_str))
+                
+                if subject in subjects_dict:
+                    # Избегаем дублей внутри одной строки
+                    for mp in marks_parts:
+                        if mp not in subjects_dict[subject]:
+                            subjects_dict[subject].append(mp)
+                else:
+                    subjects_dict[subject] = marks_parts
+    
+    results = [(s, " | ".join(m)) for s, m in subjects_dict.items()]
     
     priority = ['Алгебра', 'Геометрія', 'Географія', 'Біологія', 'Хімія', 'Фізика']
     def sort_key(item):
@@ -162,23 +196,127 @@ def get_all_marks_raw():
     results.sort(key=sort_key)
     return results
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = [[KeyboardButton("📊 Последние 10")], [KeyboardButton("📋 Таблица оценок")]]
-    await update.message.reply_text("Здраствуйте сер, запуск модуля marks_bot (Cloud Edition).", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text == "📊 Последние 10":
+    chat_id = update.effective_chat.id
+    save_active_chat(chat_id)
+    
+    # Регистрация команд в меню Телеграма (кнопка [ / ] слева)
+    await context.bot.set_my_commands([
+        ("start", "Запустить/Перезапустить интерфейс"),
+        ("latest", "Показать последние 10 оценок"),
+        ("table", "Показать таблицу оценок")
+    ])
+    
+    kb = [
+        [KeyboardButton("📊 Последние 10")],
+        [KeyboardButton("📋 Таблица оценок")],
+        [KeyboardButton("🧹 Очистить чат")],
+        [KeyboardButton("📂 Документация")]
+    ]
+    reply_markup = ReplyKeyboardMarkup(
+        kb, 
+        resize_keyboard=True, 
+        one_time_keyboard=False,
+        input_field_placeholder="Управление Katerine..."
+    )
+    
+    logger.info(f"Отправка меню для chat_id {chat_id}")
+    await update.message.reply_text(
+        "Здраствуйте сер, интерфейс Katerine System обновлен (4 кнопки).\n\n"
+        "Если они не появились — нажмите на иконку 'кнопки' в поле ввода.", 
+        reply_markup=reply_markup
+    )
+def save_active_chat(chat_id):
+    try:
+        with open("active_chats.json", "w") as f:
+            json.dump({"chat_id": chat_id}, f)
+    except: pass
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, force_text=None):
+    text = force_text if force_text else update.message.text
+    chat_id = update.effective_chat.id
+    kb = [
+        [KeyboardButton("📊 Последние 10")],
+        [KeyboardButton("📋 Таблица оценок")],
+        [KeyboardButton("🧹 Очистить чат")],
+        [KeyboardButton("📂 Документация")]
+    ]
+    reply_markup = ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=False, input_field_placeholder="Управление Katerine...")
+    if "Последние 10" in text:
         try:
             m = get_latest_marks()
-            await update.message.reply_text(f"{random.choice(INTRO_PHRASES)}\n\n" + "\n\n".join(m) if m else "Новостей нет, сер.", parse_mode='Markdown')
-        except Exception as e: await update.message.reply_text(f"⚠️ Ошибка, сер: {e}")
-    elif text == "📋 Таблица оценок":
+            await update.message.reply_text(f"{random.choice(INTRO_PHRASES)}\n\n" + "\n\n".join(m) if m else "Новостей нет, сер.", parse_mode='Markdown', reply_markup=reply_markup)
+        except Exception as e: await update.message.reply_text(f"⚠️ Ошибка, сер: {e}", reply_markup=reply_markup)
+    elif "Таблица оценок" in text:
         try:
             raw = get_all_marks_raw()
             if raw:
                 img_buf = generate_table_image(raw)
-                await update.message.reply_photo(photo=img_buf, caption=f"📊 *{random.choice(INTRO_PHRASES)}*", parse_mode='Markdown')
-            else: await update.message.reply_text("Данные не найдены, сер.")
-        except Exception as e: await update.message.reply_text(f"⚠️ Ошибка, сер: {e}")
+                await update.message.reply_photo(photo=img_buf, caption=f"📊 *{random.choice(INTRO_PHRASES)}*", parse_mode='Markdown', reply_markup=reply_markup)
+            else: await update.message.reply_text("Данные не найдены, сер.", reply_markup=reply_markup)
+        except Exception as e: await update.message.reply_text(f"⚠️ Ошибка, сер: {e}", reply_markup=reply_markup)
+    elif "Очистить чат" in text:
+        await update.message.reply_text("Чат очищен (память очищена), сер.", reply_markup=reply_markup)
+    elif "Документация" in text:
+        doc_text = (
+            "📄 *Документация Katerine System*\n\n"
+            "• *Последние 10*: Выводит последние записи об оценках из ленты новостей.\n"
+            "• *Таблица оценок*: Генерирует визуальную таблицу за текущий семестр.\n"
+            "• *Мониторинг*: Бот проверяет новые оценки каждый час с 05:00 до 23:00.\n"
+            "• *Очистить чат*: Сброс состояния интерфейса.\n"
+        )
+        await update.message.reply_text(doc_text, parse_mode='Markdown', reply_markup=reply_markup)
+async def monitor_marks(context: ContextTypes.DEFAULT_TYPE):
+    from datetime import datetime
+    now = datetime.now()
+    if not (5 <= now.hour <= 23):
+        return
+    chat_data = {}
+    try:
+        with open("active_chats.json", "r") as f:
+            chat_data = json.load(f)
+    except: return
+    chat_id = chat_data.get("chat_id")
+    if not chat_id: return
+    try:
+        marks = get_latest_marks_for_monitor()
+        seen_marks = []
+        try:
+            with open("seen_marks.json", "r") as f:
+                seen_marks = json.load(f)
+        except: pass
+        new_marks = []
+        for m in marks:
+            m_id = m['id']
+            if m_id not in seen_marks:
+                new_marks.append(m)
+                seen_marks.append(m_id)
+        if new_marks:
+            # Лимит хранения истории
+            with open("seen_marks.json", "w") as f:
+                json.dump(seen_marks[-50:], f)
+            for nm in new_marks:
+                val = nm['value']
+                feedback = get_feedback(val)
+                msg = f"🔔 *Уведомление о новой оценке!*\n\n{nm['text']}\n\n💬 {feedback}"
+                await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='Markdown')
+    except Exception as e:
+        logger.error(f"Ошибка в мониторе: {e}")
+def get_latest_marks_for_monitor():
+    html = fetch_nz_data(NEWS_URL)
+    soup = BeautifulSoup(html, 'html.parser')
+    items = soup.select('.news-page__item')
+    results = []
+    for item in items:
+        desc_el = item.select_one('.news-page__desc')
+        if desc_el:
+            text = desc_el.get_text(strip=True)
+            if "оцінк" in text.lower():
+                import re
+                mark_match = re.search(r'Отримав оцінку (\d+)', text)
+                if mark_match:
+                    val = int(mark_match.group(1))
+                    m_id = hash(text) # Простой ID на основе текста
+                    results.append({'id': m_id, 'value': val, 'text': text})
+    return results
 if __name__ == "__main__":
     # Запуск веб-сервера в отдельном потоке
     threading.Thread(target=run_flask).start()
@@ -187,7 +325,14 @@ if __name__ == "__main__":
         # Запуск бота
         logger.info("Запуск Telegram бота...")
         app = ApplicationBuilder().token(BOT_TOKEN).build()
+        
+        # Настройка планировщика (мониторинг раз в час)
+        job_queue = app.job_queue
+        job_queue.run_repeating(monitor_marks, interval=3600, first=10)
+        
         app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("latest", lambda u, c: handle_message(u, c, force_text="📊 Последние 10")))
+        app.add_handler(CommandHandler("table", lambda u, c: handle_message(u, c, force_text="📋 Таблица оценок")))
         app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
         
         logger.info("Katerine System is Running on Render.com...")
