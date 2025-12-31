@@ -13,29 +13,24 @@ import logging
 import socket
 import httpx
 from flask import Flask
-
 # 0. ЛОГИРОВАНИЕ (чтобы видеть ошибки во вкладке Logs на Hugging Face)
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
 # 1. СЛАБЫЙ ВЕБ-СЕРВЕР (Keep-Alive для Render)
 server = Flask(__name__)
 @server.route('/')
 def home(): return "Katerine System is Online"
-
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     server.run(host='0.0.0.0', port=port)
-
 # 2. ОСНОВНАЯ ЛОГИКА БОТА
 load_dotenv()
 NZ_LOGIN = os.getenv("NZ_LOGIN", "").strip()
 NZ_PASSWORD = os.getenv("NZ_PASSWORD", "").strip()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-
 def check_network():
     logger.info("--- СЕТЕВАЯ ДИАГНОСТИКА ---")
     hosts = ["api.telegram.org", "nz.ua", "google.com"]
@@ -52,20 +47,16 @@ def check_network():
                 # Упрощенная проверка через DoH не выйдет, но мы можем попробовать пингануть IP
                 logger.info(f"Попытка принудительного резолва {host} через запасные пути...")
             except: pass
-
 if not BOT_TOKEN:
     logger.error("КРИТИЧЕСКАЯ ОШИБКА: BOT_TOKEN не найден в Secrets!")
 else:
     logger.info(f"Токен загружен (длина: {len(BOT_TOKEN)})")
     check_network()
-
 if not NZ_LOGIN or not NZ_PASSWORD:
     logger.error("ОШИБКА: Логин или пароль NZ_LOGIN/NZ_PASSWORD не найдены!")
-
 BASE_URL = "https://nz.ua"
 NEWS_URL = f"{BASE_URL}/dashboard/news"
 GRADES_URL = f"{BASE_URL}/schedule/grades-statement?student_id=41093408&date_from=2025-08-21&date_to=2025-12-31"
-
 INTRO_PHRASES = [
     "Отчет об успеваемости готов, сер.",
     "Данные получены, сер.",
@@ -78,7 +69,6 @@ INTRO_PHRASES = [
     "Свежие данные по оценкам, сер.",
     "Результаты проверки системы NZ.ua, сер."
 ]
-
 def fetch_nz_data(url):
     scraper = cloudscraper.create_scraper()
     login_page = scraper.get(f"{BASE_URL}/login")
@@ -94,7 +84,6 @@ def fetch_nz_data(url):
     }
     scraper.post(f"{BASE_URL}/login", data=login_data)
     return scraper.get(url).text
-
 def generate_table_image(marks_data):
     row_height, header_height, padding, col_split = 42, 60, 20, 480
     font = ImageFont.load_default()
@@ -105,14 +94,12 @@ def generate_table_image(marks_data):
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 17)
         bold_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
     except: pass
-
     max_marks_width = 0
     for subject, marks in marks_data:
         temp_img = Image.new('RGB', (1, 1))
         temp_draw = ImageDraw.Draw(temp_img)
         m_width = temp_draw.textlength(marks, font=font)
         if m_width > max_marks_width: max_marks_width = m_width
-
     width = max(1150, int(col_split + max_marks_width + (padding * 2)))
     height = header_height + (len(marks_data) * row_height) + padding
     img = Image.new('RGB', (width, height), color=(255, 255, 255))
@@ -134,7 +121,6 @@ def generate_table_image(marks_data):
     img.save(buf, format='PNG')
     buf.seek(0)
     return buf
-
 def get_latest_marks():
     html = fetch_nz_data(NEWS_URL)
     soup = BeautifulSoup(html, 'html.parser')
@@ -151,7 +137,6 @@ def get_latest_marks():
                 clean_text = clean_text.replace("Підприємництво і фінансова грамотність", "Фін. грамотность").replace("Трудове навчання / Художня праця", "Худ. праця")
                 marks.append(f"📅 *{date_str}*\n{clean_text}")
     return marks[:10]
-
 def get_all_marks_raw():
     html = fetch_nz_data(GRADES_URL)
     soup = BeautifulSoup(html, 'html.parser') 
@@ -176,11 +161,9 @@ def get_all_marks_raw():
         return (1, item[0])
     results.sort(key=sort_key)
     return results
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[KeyboardButton("📊 Последние 10")], [KeyboardButton("📋 Таблица оценок")]]
     await update.message.reply_text("Здраствуйте сер, запуск модуля marks_bot (Cloud Edition).", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == "📊 Последние 10":
@@ -196,7 +179,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_photo(photo=img_buf, caption=f"📊 *{random.choice(INTRO_PHRASES)}*", parse_mode='Markdown')
             else: await update.message.reply_text("Данные не найдены, сер.")
         except Exception as e: await update.message.reply_text(f"⚠️ Ошибка, сер: {e}")
-
 if __name__ == "__main__":
     # Запуск веб-сервера в отдельном потоке
     threading.Thread(target=run_flask).start()
