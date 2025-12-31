@@ -1,5 +1,4 @@
 import os
-# adsf
 import io
 import random
 import json
@@ -328,7 +327,11 @@ if __name__ == "__main__":
         
         # Настройка планировщика (мониторинг раз в час)
         job_queue = app.job_queue
-        job_queue.run_repeating(monitor_marks, interval=3600, first=10)
+        if job_queue:
+            job_queue.run_repeating(monitor_marks, interval=3600, first=10)
+            logger.info("Мониторинг оценок запущен (1 раз в час).")
+        else:
+            logger.error("КРИТИЧЕСКАЯ ОШИБКА: JobQueue не инициализирован! Проверьте наличие библиотеки apscheduler.")
         
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("latest", lambda u, c: handle_message(u, c, force_text="📊 Последние 10")))
