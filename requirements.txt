@@ -1,0 +1,8 @@
+cloudscraper
+beautifulsoup4
+python-dotenv
+python-telegram-bot
+Pillow
+flask
+fastapi
+uvicorn[standard]
