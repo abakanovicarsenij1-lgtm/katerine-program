@@ -1,4 +1,3 @@
-# q
 import os
 import io
 import random
